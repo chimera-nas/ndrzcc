@@ -1,0 +1,16 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Chimera-NAS Project Contributors
+ * SPDX-License-Identifier: LGPL-2.1-only
+ */
+
+[ uuid(11112222-3333-4444-5555-666677778888), version(1.0) ]
+interface rt {
+    typedef struct {
+        uint32           id;
+        uint8            tag[4];
+        [string] wchar_t *name;
+    } Item;
+
+    [opnum(0)] uint32 Noop(
+        [in] uint32 x);
+}

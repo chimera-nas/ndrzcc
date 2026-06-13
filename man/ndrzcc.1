@@ -1,0 +1,26 @@
+.\" SPDX-FileCopyrightText: 2026 Chimera-NAS Project Contributors
+.\" SPDX-License-Identifier: LGPL-2.1-only
+.TH NDRZCC 1 "2026" "ndrzcc" "User Commands"
+.SH NAME
+ndrzcc \- DCE/RPC NDR marshalling compiler
+.SH SYNOPSIS
+.B ndrzcc
+.I input.idl output.c output.h
+.SH DESCRIPTION
+.B ndrzcc
+compiles a pragmatic subset of the Microsoft Interface Definition Language
+(MS-IDL) into C code implementing DCE/RPC NDR (Network Data Representation,
+transfer syntax 8a885d04-1ceb-11c9-9fe8-08002b104860) marshalling and
+unmarshalling, plus a per-operation dispatch table for use by a DCE/RPC
+server over named pipes.
+.PP
+It is a sibling of
+.BR xdrzcc (1)
+and mirrors its architecture: a Flex/Bison front end builds an AST which a
+code generator lowers to C, with the runtime support embedded into the
+generated source so the output has no external dependency beyond libc and a
+caller-supplied character-conversion context.
+.SH SEE ALSO
+.BR xdrzcc (1)
+.SH AUTHOR
+Chimera-NAS Project Contributors.

@@ -1,0 +1,10 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Chimera-NAS Project Contributors
+ * SPDX-License-Identifier: LGPL-2.1-only
+ */
+
+[ uuid(12345778-1234-abcd-ef00-0123456789ab), version(0.0) ]
+interface sidtest {
+    [opnum(0)] uint32 EchoSid(
+        [out] RPC_SID *sid);
+}
