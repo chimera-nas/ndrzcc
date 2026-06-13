@@ -41,7 +41,13 @@ static FILE                 *out_h;
  * ndrzcc is a short-lived build-time tool that deliberately arena-leaks its AST
  * rather than walking it to free.  Disable LeakSanitizer so Debug (ASan) builds
  * don't fail the generation custom-command on exit.
+ *
+ * The runtime resolves __asan_default_options through libasan.so against the
+ * executable's *dynamic* symbol table; the tree builds -fvisibility=hidden, so
+ * the symbol must be forced to default visibility or it is invisible to the
+ * sanitizer and the override is silently ignored.
  */
+__attribute__((visibility("default")))
 const char *
 __asan_default_options(void)
 {
