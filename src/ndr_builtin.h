@@ -44,10 +44,20 @@
  * (unmarshall) path.  Strings, arrays and out-of-line structs point into it, so
  * it must outlive the unmarshalled value and is freed in one shot.
  * --------------------------------------------------------------------------*/
+/* A chunk of arena storage; the payload follows the header inline at
+ * (uint8_t *)(blk + 1).  Chunks are singly linked newest-first and are never
+ * resized or moved once allocated, so every pointer ndr_dbuf_alloc returns
+ * stays valid until ndr_dbuf_destroy -- callers (e.g. the RPC dispatcher) hold
+ * the in/out structs across many later allocations. */
+struct ndr_dbuf_block {
+    struct ndr_dbuf_block *next;
+    size_t                 cap;
+    size_t                 used;
+};
+
 struct ndr_dbuf {
-    uint8_t *buffer;
-    size_t   size;
-    size_t   used;
+    struct ndr_dbuf_block *head;   /* newest block; allocations bump from here */
+    size_t                 hint;   /* default capacity for a fresh block */
 };
 
 static inline int
@@ -58,10 +68,9 @@ ndr_dbuf_init(
     if (hint < 256) {
         hint = 256;
     }
-    d->buffer = malloc(hint);
-    d->size   = d->buffer ? hint : 0;
-    d->used   = 0;
-    return d->buffer ? 0 : -1;
+    d->head = NULL;   /* blocks are allocated lazily on first ndr_dbuf_alloc */
+    d->hint = hint;
+    return 0;
 } /* ndr_dbuf_init */
 
 static inline void *
@@ -69,27 +78,34 @@ ndr_dbuf_alloc(
     struct ndr_dbuf *d,
     size_t           len)
 {
-    void *p;
+    struct ndr_dbuf_block *blk = d->head;
+    void                  *p;
 
     /* 8-byte align every allocation so embedded scalars stay aligned. */
-    d->used = (d->used + 7) & ~((size_t) 7);
-
-    if (NDR_UNLIKELY(d->used + len > d->size)) {
-        size_t   newsize = d->size ? d->size : 256;
-        uint8_t *nb;
-        while (d->used + len > newsize) {
-            newsize *= 2;
-        }
-        nb = realloc(d->buffer, newsize);
-        if (NDR_UNLIKELY(!nb)) {
-            return NULL;
-        }
-        d->buffer = nb;
-        d->size   = newsize;
+    if (blk) {
+        blk->used = (blk->used + 7) & ~((size_t) 7);
     }
 
-    p        = d->buffer + d->used;
-    d->used += len;
+    if (NDR_UNLIKELY(!blk || blk->used + len > blk->cap)) {
+        /* Grow by linking a NEW block rather than realloc'ing the current one,
+         * so previously returned pointers never move.  Outsize requests get a
+         * dedicated block sized to fit. */
+        size_t cap = d->hint;
+        if (cap < len) {
+            cap = len;
+        }
+        blk = malloc(sizeof(*blk) + cap);
+        if (NDR_UNLIKELY(!blk)) {
+            return NULL;
+        }
+        blk->cap  = cap;
+        blk->used = 0;
+        blk->next = d->head;
+        d->head   = blk;
+    }
+
+    p          = (uint8_t *) (blk + 1) + blk->used;
+    blk->used += len;
     memset(p, 0, len);
     return p;
 } /* ndr_dbuf_alloc */
@@ -97,10 +113,14 @@ ndr_dbuf_alloc(
 static inline void
 ndr_dbuf_destroy(struct ndr_dbuf *d)
 {
-    free(d->buffer);
-    d->buffer = NULL;
-    d->size   = 0;
-    d->used   = 0;
+    struct ndr_dbuf_block *blk = d->head, *next;
+
+    while (blk) {
+        next = blk->next;
+        free(blk);
+        blk = next;
+    }
+    d->head = NULL;
 } /* ndr_dbuf_destroy */
 
 /* ----------------------------------------------------------------------------
