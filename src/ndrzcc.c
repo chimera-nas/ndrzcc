@@ -367,11 +367,15 @@ emit_member_push(
 
     snprintf(acc, sizeof(acc), "v->%s", m->name);
 
-    /* ---- conformant array (pointer to N elements) ---- */
+    /* ---- pointer to a conformant array of N elements ---- */
     if (t->conformant) {
         char cnt[160];
         subst_sibling("v", t->size_is, cnt, sizeof(cnt));
-        if (!strcmp(pass, "NDR_BUFFERS")) {
+        if (!strcmp(pass, "NDR_SCALARS")) {
+            /* the array pointer's referent id sits inline in the scalars pass;
+             * the array body (max_count + elements) is deferred to buffers */
+            fprintf(f, "    ndr_put_ref(w, %s);\n", acc);
+        } else {
             fprintf(f, "    if (%s) {\n", acc);
             fprintf(f, "        uint32_t _n = (uint32_t)(%s);\n", cnt);
             fprintf(f, "        ndr_put_u32(w, _n);\n");   /* max_count */
@@ -394,10 +398,11 @@ emit_member_push(
 
     /* ---- [string] pointer ---- */
     if (t->is_string) {
+        const char *pushfn = t->string_nonul ? "ndr_push_wstring_nonul" : "ndr_push_wstring";
         if (!strcmp(pass, "NDR_SCALARS")) {
             fprintf(f, "    ndr_put_ref(w, %s);\n", acc);
         } else {
-            fprintf(f, "    if (%s) ndr_push_wstring(w, %s);\n", acc, acc);
+            fprintf(f, "    if (%s) %s(w, %s);\n", acc, pushfn, acc);
         }
         return;
     }
@@ -463,10 +468,11 @@ emit_member_pull(
     snprintf(acc, sizeof(acc), "v->%s", m->name);
 
     if (t->conformant) {
-        char cnt[160];
-        subst_sibling("v", t->size_is, cnt, sizeof(cnt));
-        if (!strcmp(pass, "NDR_BUFFERS")) {
-            fprintf(f, "    {\n");
+        if (!strcmp(pass, "NDR_SCALARS")) {
+            /* array pointer referent id */
+            fprintf(f, "    %s = (void *) (uintptr_t) ndr_get_u32(c);\n", acc);
+        } else {
+            fprintf(f, "    if (%s) {\n", acc);
             fprintf(f, "        uint32_t _n = ndr_get_u32(c);\n");
             fprintf(f, "        %s = ndr_dbuf_alloc(d, _n * sizeof(*%s));\n", acc, acc);
             if (b != NDR_BUILTIN_NONE) {
@@ -501,7 +507,17 @@ emit_member_pull(
     }
 
     if (t->is_sid) {
-        if (!strcmp(pass, "NDR_SCALARS")) {
+        if (t->nptr > 0) {
+            /* pointer to SID: referent id in scalars, deferred body in buffers */
+            if (!strcmp(pass, "NDR_SCALARS")) {
+                fprintf(f, "    %s = (struct ndr_sid *) (uintptr_t) ndr_get_u32(c);\n", acc);
+            } else {
+                fprintf(f, "    if (%s) {\n", acc);
+                fprintf(f, "        %s = ndr_dbuf_alloc(d, sizeof(struct ndr_sid));\n", acc);
+                fprintf(f, "        ndr_pull_sid(c, NDR_SCALARS, %s);\n", acc);
+                fprintf(f, "    }\n");
+            }
+        } else if (!strcmp(pass, "NDR_SCALARS")) {
             fprintf(f, "    ndr_pull_sid(c, NDR_SCALARS, &%s);\n", acc);
         }
         return;
@@ -515,8 +531,22 @@ emit_member_pull(
         return;
     }
 
-    /* nested struct (value form only for pull in v1) */
-    fprintf(f, "    ndr_pull_%s(c, %s, &%s, d);\n", t->name, pass, acc);
+    /* nested named struct */
+    if (t->nptr > 0) {
+        /* pointer to struct: referent id in scalars, deferred pointee in buffers
+         * (symmetric to emit_member_push) */
+        if (!strcmp(pass, "NDR_SCALARS")) {
+            fprintf(f, "    %s = (struct %s *) (uintptr_t) ndr_get_u32(c);\n", acc, t->name);
+        } else {
+            fprintf(f, "    if (%s) {\n", acc);
+            fprintf(f, "        %s = ndr_dbuf_alloc(d, sizeof(struct %s));\n", acc, t->name);
+            fprintf(f, "        ndr_pull_%s(c, NDR_SCALARS, %s, d);\n", t->name, acc);
+            fprintf(f, "        ndr_pull_%s(c, NDR_BUFFERS, %s, d);\n", t->name, acc);
+            fprintf(f, "    }\n");
+        }
+    } else {
+        fprintf(f, "    ndr_pull_%s(c, %s, &%s, d);\n", t->name, pass, acc);
+    }
 } /* emit_member_pull */
 
 static void
@@ -661,7 +691,25 @@ emit_op_funcs(void)
             }
             snprintf(acc, sizeof(acc), "in->%s", p->name);
 
-            if (t->is_string) {
+            if (t->conformant) {
+                /* [in, size_is(...)] T *arr : a top-level (ref) conformant
+                 * array -- no referent id, just the hoisted max_count then the
+                 * elements.  The element count is also carried by the sibling
+                 * size_is parameter, which the handler reads directly. */
+                fprintf(out_c, "    {\n");
+                fprintf(out_c, "        uint32_t _n = ndr_get_u32(c);\n");
+                fprintf(out_c, "        %s = ndr_dbuf_alloc(d, _n * sizeof(*%s));\n", acc, acc);
+                if (b != NDR_BUILTIN_NONE) {
+                    fprintf(out_c, "        for (uint32_t _i = 0; _i < _n; _i++)\n");
+                    fprintf(out_c, "            %s[_i] = ndr_get_u%d(c);\n", acc, builtin_width(b) * 8);
+                } else {
+                    fprintf(out_c, "        for (uint32_t _i = 0; _i < _n; _i++)\n");
+                    fprintf(out_c, "            ndr_pull_%s(c, NDR_SCALARS, &%s[_i], d);\n", t->name, acc);
+                    fprintf(out_c, "        for (uint32_t _i = 0; _i < _n; _i++)\n");
+                    fprintf(out_c, "            ndr_pull_%s(c, NDR_BUFFERS, &%s[_i], d);\n", t->name, acc);
+                }
+                fprintf(out_c, "    }\n");
+            } else if (t->is_string) {
                 if (param_has_referent(p)) {
                     fprintf(out_c, "    if (ndr_get_u32(c)) %s = ndr_pull_wstring(c, d);\n", acc);
                 } else {
@@ -669,6 +717,14 @@ emit_op_funcs(void)
                 }
             } else if (t->is_sid) {
                 fprintf(out_c, "    ndr_pull_sid(c, NDR_SCALARS, &%s);\n", acc);
+            } else if ((b != NDR_BUILTIN_NONE || find_enum(t->name)) &&
+                       t->nptr >= 1 && t->ptr == NDR_PTR_UNIQUE) {
+                /* [in] scalar* with [unique]: referent id then (if non-null) the
+                 * value, keeping the cursor aligned for any following params. */
+                int bb = (b != NDR_BUILTIN_NONE) ? b : NDR_BUILTIN_UINT32;
+                fprintf(out_c, "    if (ndr_get_u32(c)) {\n    ");
+                emit_scalar_get(out_c, bb, acc);
+                fprintf(out_c, "    }\n");
             } else if (b != NDR_BUILTIN_NONE || find_enum(t->name)) {
                 int bb = (b != NDR_BUILTIN_NONE) ? b : NDR_BUILTIN_UINT32;
                 emit_scalar_get(out_c, bb, acc);
@@ -685,37 +741,67 @@ emit_op_funcs(void)
                 op->name);
         fprintf(out_c, "    const struct %s_out *out = vp;\n", op->name);
         fprintf(out_c, "    (void) out;\n");
-        /* SCALARS for all out params, then BUFFERS for all out params */
-        for (int pass = 0; pass < 2; pass++) {
-            const char *flag = pass == 0 ? "NDR_SCALARS" : "NDR_BUFFERS";
-            NDR_FOREACH(p, op->params)
-            {
-                struct ndr_type *t = p->type;
-                char             acc[160];
-                int              b = classify_builtin(t->name);
+        /* Each top-level [out] parameter is marshalled completely (its scalars
+         * then its buffers) before the next: top-level params are sequenced,
+         * not grouped into one structure.  Grouping all scalars then all
+         * buffers desynchronises real clients on ops with multiple pointer
+         * outs (verified against samba's NDR for LookupSids/GetUserName). */
+        NDR_FOREACH(p, op->params)
+        {
+            struct ndr_type *t = p->type;
+            char             acc[160];
+            int              b = classify_builtin(t->name);
 
-                if (!p->out) {
-                    continue;
-                }
-                snprintf(acc, sizeof(acc), "out->%s", p->name);
+            if (!p->out) {
+                continue;
+            }
+            snprintf(acc, sizeof(acc), "out->%s", p->name);
+
+            for (int pass = 0; pass < 2; pass++) {
+                const char *flag = pass == 0 ? "NDR_SCALARS" : "NDR_BUFFERS";
 
                 if (t->is_string) {
                     if (pass == 0) {
                         fprintf(out_c, "    ndr_put_ref(w, %s);\n", acc);
                     } else {
-                        fprintf(out_c, "    if (%s) ndr_push_wstring(w, %s);\n", acc, acc);
+                        fprintf(out_c, "    if (%s) %s(w, %s);\n", acc,
+                                t->string_nonul ? "ndr_push_wstring_nonul" : "ndr_push_wstring", acc);
                     }
                 } else if (t->is_sid) {
                     if (pass == 0) {
                         fprintf(out_c, "    ndr_push_sid(w, NDR_SCALARS, &%s);\n", acc);
+                    }
+                } else if ((b != NDR_BUILTIN_NONE || find_enum(t->name)) &&
+                           t->nptr >= 1 && t->ptr == NDR_PTR_UNIQUE) {
+                    /* [out] scalar* with [unique] (e.g. resume_handle): a
+                     * referent id (we always have a value, so non-null) then the
+                     * value deferred to the buffers pass. */
+                    int bb = (b != NDR_BUILTIN_NONE) ? b : NDR_BUILTIN_UINT32;
+                    if (pass == 0) {
+                        fprintf(out_c, "    ndr_put_ref(w, (const void *) 1);\n");
+                    } else {
+                        emit_scalar_put(out_c, bb, acc);
                     }
                 } else if (b != NDR_BUILTIN_NONE || find_enum(t->name)) {
                     int bb = (b != NDR_BUILTIN_NONE) ? b : NDR_BUILTIN_UINT32;
                     if (pass == 0) {
                         emit_scalar_put(out_c, bb, acc);
                     }
+                } else if (t->nptr >= 2) {
+                    /* [out] T ** : a unique pointer (the outer *) to the
+                     * struct.  Emit its referent id in the scalars pass and the
+                     * deferred pointee (scalars+buffers) in the buffers pass.
+                     * The _out field stores the inner T * (one level reduced). */
+                    if (pass == 0) {
+                        fprintf(out_c, "    ndr_put_ref(w, %s);\n", acc);
+                    } else {
+                        fprintf(out_c, "    if (%s) {\n", acc);
+                        fprintf(out_c, "        ndr_push_%s(w, NDR_SCALARS, %s);\n", t->name, acc);
+                        fprintf(out_c, "        ndr_push_%s(w, NDR_BUFFERS, %s);\n", t->name, acc);
+                        fprintf(out_c, "    }\n");
+                    }
                 } else {
-                    /* struct by-ref (top-level ref pointer: no referent id) */
+                    /* [out] T * : top-level ref pointer, no referent id, inline */
                     fprintf(out_c, "    ndr_push_%s(w, %s, &%s);\n", t->name, flag, acc);
                 }
             }

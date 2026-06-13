@@ -18,7 +18,7 @@
 /* ----------------------------------------------------------------------------
  * RPC_SID
  * --------------------------------------------------------------------------*/
-void
+static void
 ndr_push_sid(
     struct ndr_writer    *w,
     int                   flags,
@@ -39,7 +39,7 @@ ndr_push_sid(
     }
 } /* ndr_push_sid */
 
-void
+static void
 ndr_pull_sid(
     struct ndr_cursor *c,
     int                flags,
@@ -62,12 +62,21 @@ ndr_pull_sid(
 } /* ndr_pull_sid */
 
 /* ----------------------------------------------------------------------------
- * Conformant-varying UTF-16 string body ([string] wchar_t *).
+ * Conformant-varying UTF-16 string body ([string] wchar_t *):
+ * [max_count][offset=0][actual_count] then the UTF-16 code units.
+ *
+ * Two conventions: the standard MS-RPC [string] is NUL-terminated, so the
+ * counts are strlen+1 and the terminator is transmitted (ndr_push_wstring).
+ * The RPC_UNICODE_STRING / lsa_String buffer is NOT NUL-terminated -- its
+ * counts come from the struct's length/size (max_count == size/2,
+ * actual_count == length/2), so strlen with no terminator
+ * (ndr_push_wstring_nonul).
  * --------------------------------------------------------------------------*/
-void
-ndr_push_wstring(
+static void
+ndr_push_wstring_impl(
     struct ndr_writer *w,
-    const char        *utf8)
+    const char        *utf8,
+    int                with_nul)
 {
     uint16_t buf[2048];
     int      n;
@@ -83,19 +92,36 @@ ndr_push_wstring(
         return;
     }
 
-    /* [string] arrays carry the terminating NUL in both counts. */
-    buf[n] = 0;
-    count  = (uint32_t) n + 1;
+    if (with_nul) {
+        buf[n++] = 0;
+    }
+    count = (uint32_t) n;
 
-    ndr_put_u32(w, count);   /* max_count   */
-    ndr_put_u32(w, 0);       /* offset      */
+    ndr_put_u32(w, count);   /* max_count    */
+    ndr_put_u32(w, 0);       /* offset       */
     ndr_put_u32(w, count);   /* actual_count */
     for (uint32_t i = 0; i < count; i++) {
         ndr_put_u16(w, buf[i]);
     }
+} /* ndr_push_wstring_impl */
+
+static void
+ndr_push_wstring(
+    struct ndr_writer *w,
+    const char        *utf8)
+{
+    ndr_push_wstring_impl(w, utf8, 1);
 } /* ndr_push_wstring */
 
-char *
+static void
+ndr_push_wstring_nonul(
+    struct ndr_writer *w,
+    const char        *utf8)
+{
+    ndr_push_wstring_impl(w, utf8, 0);
+} /* ndr_push_wstring_nonul */
+
+static char *
 ndr_pull_wstring(
     struct ndr_cursor *c,
     struct ndr_dbuf   *d)
@@ -141,19 +167,3 @@ ndr_pull_wstring(
     return out;
 } /* ndr_pull_wstring */
 
-/* ----------------------------------------------------------------------------
- * Operation lookup
- * --------------------------------------------------------------------------*/
-const struct ndr_op_desc *
-ndr_find_op(
-    const struct ndr_op_desc *table,
-    int                       count,
-    int                       opnum)
-{
-    for (int i = 0; i < count; i++) {
-        if (table[i].opnum == (uint16_t) opnum) {
-            return &table[i];
-        }
-    }
-    return NULL;
-} /* ndr_find_op */

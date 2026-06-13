@@ -29,6 +29,7 @@ struct attr_set {
     int                in, out;
     enum ndr_ptr_class ptr;
     int                is_string;
+    int                string_nonul;
     int                context_handle;
     char              *size_is;
     char              *length_is;
@@ -101,6 +102,8 @@ attr_apply(struct attr_set *a, const char *name, char *arg)
         a->in = 1;
     } else if (!strcmp(name, "out")) {
         a->out = 1;
+    } else if (!strcmp(name, "nonul")) {
+        a->string_nonul = 1;
     } else if (!strcmp(name, "string")) {
         a->is_string = 1;
     } else if (!strcmp(name, "unique")) {
@@ -144,6 +147,7 @@ make_type(struct attr_set *a, char *base, struct decl_tok d)
     if (a) {
         t->ptr               = a->ptr;
         t->is_string         = a->is_string;
+        t->string_nonul      = a->string_nonul;
         t->is_context_handle = a->context_handle;
         t->size_is           = a->size_is;
         t->conformant        = a->size_is ? 1 : 0;

@@ -55,6 +55,7 @@ struct ndr_type {
     int   nptr;                       /* number of '*' pointer levels */
     enum ndr_ptr_class ptr;           /* pointer decoration */
     int   is_string;                  /* [string] -> conformant-varying wchar */
+    int   string_nonul;               /* [nonul] -> counted, no terminating NUL (lsa_String) */
     int   is_context_handle;
     int   is_sid;                     /* base type is the well-known RPC_SID */
 

@@ -495,27 +495,14 @@ struct ndr_sid {
     uint32_t sub_authority[NDR_SID_MAX_SUB_AUTH];
 };
 
-void ndr_push_sid(
-    struct ndr_writer    *w,
-    int                   flags,
-    const struct ndr_sid *sid);
-void ndr_pull_sid(
-    struct ndr_cursor *c,
-    int                flags,
-    struct ndr_sid    *sid);
-
 /*
- * Conformant-varying UTF-16 string ([string] wchar_t *).  The SCALARS pass for
- * an embedded [string] pointer is just its referent id (handled by the caller
- * via ndr_put_ref); these emit the BUFFERS-pass body: [max_count][offset=0]
- * [actual_count] then the UTF-16 code units (including the terminating NUL).
+ * ndr_push_sid/ndr_pull_sid and ndr_push_wstring/ndr_pull_wstring are defined
+ * (as static) in the embedded ndr_builtin.c that precedes the generated
+ * marshallers in each generated .c, so they need no declaration here and stay
+ * internal to each translation unit -- letting several generated *_ndr.c link
+ * into one library without colliding.  Conformant-varying UTF-16 string body is
+ * [max_count][offset=0][actual_count] then the UTF-16 code units.
  */
-void ndr_push_wstring(
-    struct ndr_writer *w,
-    const char        *utf8);
-char * ndr_pull_wstring(
-    struct ndr_cursor *c,
-    struct ndr_dbuf   *d);
 
 /* ----------------------------------------------------------------------------
  * Per-operation dispatch table, consumed by the hand-written transceive glue.
@@ -534,9 +521,20 @@ struct ndr_op_desc {
         const void        *out);
 };
 
-const struct ndr_op_desc * ndr_find_op(
+/* Inline (header) so external transceive glue can call it without an
+ * out-of-line symbol that would collide across generated translation units. */
+static inline const struct ndr_op_desc *
+ndr_find_op(
     const struct ndr_op_desc *table,
     int                       count,
-    int                       opnum);
+    int                       opnum)
+{
+    for (int i = 0; i < count; i++) {
+        if (table[i].opnum == (uint16_t) opnum) {
+            return &table[i];
+        }
+    }
+    return NULL;
+} /* ndr_find_op */
 
 #endif /* NDR_BUILTIN_H */
