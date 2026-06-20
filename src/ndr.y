@@ -303,9 +303,11 @@ attr_arg
 
 /* ---------------- types & declarators ---------------- */
 
+/* type_ref deliberately excludes VOID: a member/param/switch/const type is
+ * never void, and admitting it here would make `(VOID` and `DEFAULT: VOID`
+ * ambiguous against the standalone-VOID rules in param_list_opt and ucase. */
 type_ref
     : IDENTIFIER { $$ = $1; }
-    | VOID       { $$ = ndr_strdup("void"); }
     ;
 
 ret_type
