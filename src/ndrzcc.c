@@ -309,26 +309,37 @@ emit_op_io_structs(void)
     NDR_FOREACH(op, g_iface->ops)
     {
         struct ndr_param *p;
+        int fields = 0;
 
         fprintf(out_h, "struct %s_in {\n", op->name);
         NDR_FOREACH(p, op->params)
         {
             if (p->in) {
+                fields++;
                 emit_field_decl(out_h, p->type, p->name, 1);
             }
         }
+        if (!fields) {
+            fprintf(out_h, "    unsigned char _ndr_unused;\n");
+        }
         fprintf(out_h, "};\n\n");
 
+        fields = 0;
         fprintf(out_h, "struct %s_out {\n", op->name);
         NDR_FOREACH(p, op->params)
         {
             if (p->out) {
+                fields++;
                 emit_field_decl(out_h, p->type, p->name, 1);
             }
         }
         if (op->return_type &&
             classify_builtin(op->return_type->name) != NDR_BUILTIN_VOID) {
+            fields++;
             fprintf(out_h, "    uint32_t status;\n");
+        }
+        if (!fields) {
+            fprintf(out_h, "    unsigned char _ndr_unused;\n");
         }
         fprintf(out_h, "};\n\n");
     }
