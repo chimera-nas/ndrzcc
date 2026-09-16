@@ -31,8 +31,13 @@
 #include <stdlib.h>
 
 #ifndef NDR_LIKELY
+#ifdef _MSC_VER
+#define NDR_LIKELY(x) (!!(x))
+#define NDR_UNLIKELY(x) (!!(x))
+#else
 #define NDR_LIKELY(x)   __builtin_expect(!!(x), 1)
 #define NDR_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
 #endif /* ifndef NDR_LIKELY */
 
 /* Marshalling passes (bitmask, may be combined for a full single-shot walk). */

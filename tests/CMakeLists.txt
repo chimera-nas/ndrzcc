@@ -2,7 +2,16 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-only
 
-add_definitions(-UNDEBUG)
+if(MSVC)
+    add_compile_options(/UNDEBUG)
+    set(NDR_WARNING_FLAGS /wd4101 /wd4189)
+else()
+    add_definitions(-UNDEBUG)
+    set(NDR_WARNING_FLAGS -Wno-unused)
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        list(APPEND NDR_WARNING_FLAGS -Wno-format-truncation)
+    endif()
+endif()
 
 macro(unit_test_ndrzcc name idl_file c_file)
 
@@ -21,7 +30,7 @@ macro(unit_test_ndrzcc name idl_file c_file)
     add_executable(${name} ${c_file} ${NDR_C})
 
     set_source_files_properties(
-        ${NDR_C} PROPERTIES COMPILE_OPTIONS "-Wno-unused;-Wno-format-truncation"
+        ${NDR_C} PROPERTIES COMPILE_OPTIONS "${NDR_WARNING_FLAGS}"
     )
 
     add_dependencies(${name} ndrzcc)

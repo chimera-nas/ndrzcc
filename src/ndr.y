@@ -58,7 +58,17 @@ static uint32_t       g_next_opnum;
 char *
 ndr_strdup(const char *str)
 {
-    return str ? strdup(str) : NULL;
+    size_t length;
+    char *copy;
+    if (!str) {
+        return NULL;
+    }
+    length = strlen(str) + 1;
+    copy = malloc(length);
+    if (copy) {
+        memcpy(copy, str, length);
+    }
+    return copy;
 }
 
 static char *
