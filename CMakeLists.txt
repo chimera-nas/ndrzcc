@@ -2,8 +2,10 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-only
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 project(ndrzcc LANGUAGES C)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 enable_testing()
 
@@ -11,18 +13,23 @@ enable_testing()
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(MSVC)
+    add_compile_options(/W3 /WX /wd4244 /wd4267)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
     message(STATUS "Enabling AddressSanitizer")
     add_definitions(-fsanitize=address -fno-omit-frame-pointer
                     -fno-optimize-sibling-calls -fstack-protector-all)
     add_link_options(-fsanitize=address)
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
+if(NOT MSVC AND CMAKE_BUILD_TYPE STREQUAL "Release")
     add_definitions(-O3)
 endif()
 
-add_definitions(-g -Wall -Werror)
+if(NOT MSVC)
+    add_definitions(-g -Wall -Werror)
+endif()
 
 add_subdirectory(src)
 

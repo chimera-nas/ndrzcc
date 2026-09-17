@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Chimera-NAS Project Contributors
+# SPDX-License-Identifier: Unlicense
+name: Build and Test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    name: MSVC ${{ matrix.arch }} ${{ matrix.config }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: windows-2022, arch: x64, config: Debug}
+          - {runner: windows-2022, arch: x64, config: Release}
+          - {runner: windows-11-arm, arch: ARM64, config: Debug}
+          - {runner: windows-11-arm, arch: ARM64, config: Release}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install parser generators
+        shell: pwsh
+        run: |
+          $archive = "$env:RUNNER_TEMP/winflexbison.zip"
+          Invoke-WebRequest https://github.com/lexxmark/winflexbison/releases/download/v2.5.25/win_flex_bison-2.5.25.zip -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '8d324b62be33604b2c45ad1dd34ab93d722534448f55a16ca7292de32b6ac135') { throw 'WinFlexBison checksum mismatch' }
+          Expand-Archive $archive "$env:RUNNER_TEMP/winflexbison"
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} "-DFLEX_EXECUTABLE=$env:RUNNER_TEMP/winflexbison/win_flex.exe" "-DBISON_EXECUTABLE=$env:RUNNER_TEMP/winflexbison/win_bison.exe"
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel 4
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --no-tests=error --output-junit results.xml
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-${{ matrix.arch }}-${{ matrix.config }}
+          path: build/results.xml
+  unix:
+    name: ${{ matrix.os }} ${{ matrix.config }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y flex bison ninja-build
+      - name: Install macOS tools
+        if: runner.os == 'macOS'
+        run: |
+          brew install flex bison ninja
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+      - name: Build
+        run: cmake --build build --parallel 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --no-tests=error
